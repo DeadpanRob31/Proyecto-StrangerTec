@@ -6,7 +6,7 @@ import time
 import random
 
 #====================Conexion Wifi=====================
-IP_PICO = "172.24.193.250" 
+IP_PICO = "10.53.179.250" 
 PUERTO = 65432
 #======================================================
 
@@ -63,6 +63,7 @@ class JuegoMorseFinal:
     
         self.t_ultima_soltada = None  
         self.lista_precisiones = []   
+        self.switch_activo = False 
 
         self.pantalla_configuracion()
 
@@ -88,6 +89,7 @@ class JuegoMorseFinal:
         tk.Label(card, text="Modos de juego", bg=COLOR_CARD, fg="gray", font=("Arial", 13, "bold")).pack(anchor="w", pady=(15, 0))
         tk.Radiobutton(card, text="Escucha y Transmisión", variable=self.modo_juego, value="Escucha", bg=COLOR_CARD,font=("Arial", 13, "bold"), fg="white", selectcolor=COLOR_BG).pack(anchor="w")
         tk.Radiobutton(card, text="Transmisión Sencilla", variable=self.modo_juego, value="Simple", bg=COLOR_CARD,font=("Arial", 13, "bold"), fg="white", selectcolor=COLOR_BG).pack(anchor="w")
+        
 
         tk.Label(card, text="Salida de la frase", bg=COLOR_CARD, fg="gray", font=("Arial", 13, "bold")).pack(anchor="w", pady=(15, 0))
         tk.Radiobutton(card, text="LEDS", variable=self.salida, value="FACIL", bg=COLOR_CARD,font=("Arial", 13, "bold"), fg="white", selectcolor=COLOR_BG).pack(anchor="w")
@@ -111,9 +113,9 @@ class JuegoMorseFinal:
             #Conexion a la pico
             self.socket_pico = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket_pico.connect((IP_PICO, PUERTO))
-        
-            self.pantalla_juego()
-            threading.Thread(target=self.hilo_escucha_pico, daemon=True).start()
+
+            self.pantalla_juego()    
+            threading.Thread(target=self.hilo_escucha_pico, daemon=True).start()        
             self.ventana.after(500, self.iniciar_nueva_frase)
             
         except Exception as e:
@@ -139,6 +141,11 @@ class JuegoMorseFinal:
         self.frame_secreto = tk.Frame(display, bg=COLOR_CARD)
         self.frame_secreto.pack(pady=10)
         self.lbl_feedback = tk.Label(self.ventana, text="", font=("Courier", 20), bg=COLOR_BG, fg="white"); self.lbl_feedback.pack(pady=20)
+
+        #Comparacion en pantalla
+        self.lbl_ascii_comp = tk.Label(self.ventana, text="Esperando letra en código Morse...", font=("Arial", 11, "bold"), bg=COLOR_CARD, 
+        fg="#95a5a6", bd=2, relief="groove", padx=15, pady=15)
+        self.lbl_ascii_comp.pack(pady=10, fill="x", padx=30)
 
         #Teclado para Jugador A
         self.ventana.bind("<KeyPress-space>", self.on_press_teclado)
@@ -211,6 +218,28 @@ class JuegoMorseFinal:
     def validar_letra(self, origen, duracion, simbolo):
         #Convierte los estimulos en letras, verifica si esta bien y añade puntos
         letra = MORSE_INV.get(self.intentos_morse_actual, "?")
+
+        #Extraccion de codigo ASCII
+        if self.switch_activo and letra != "?" and letra != " ":
+            try:
+                cod_ascii = ord(letra)
+                bits_4 = cod_ascii & 0x0F
+                resultado_soft = (bits_4 + 5) & 0x0F
+
+                binario_entrada = f"{bits_4:04b}"
+                binario_resultado = f"{resultado_soft:04b}"
+
+                info_pantalla = (
+                    f"Binario enviado: {binario_entrada}\n"
+                    f"Resultado Esperado: {binario_resultado}"
+                )
+                self.lbl_ascii_comp.config(text=info_pantalla, fg="#3a5fe5")
+
+                if hasattr(self, 'socket_pico') and self.socket_pico:
+                    self.socket_pico.sendall(f"ASCII:{bits_4}\n".encode())
+            except Exception as e:
+                print("Error procesando código binario:", e)
+
         #Si no existe devuelve ?
         self.intentos_morse_actual = ""
         self.lbl_feedback.config(text="")
@@ -312,6 +341,20 @@ class JuegoMorseFinal:
         if self.frase_actual.startswith(" "):
             self.indice_actual += 1
 
+    def actualizar_switch(self, activado):
+        self.switch_activo = activado
+        if activado:
+            # Vuelve a mostrarse si estaba oculto
+            if not self.lbl_ascii_comp.winfo_ismapped():
+                self.lbl_ascii_comp.pack(pady=10, fill="x", padx=30)
+            self.lbl_ascii_comp.config(
+                text="Esperando letra en código Morse...",
+                fg="#95a5a6"
+            )
+        else:
+            # Oculta completamente la interfaz de comparacion
+            self.lbl_ascii_comp.pack_forget()
+
     def actualizar_ui(self):
         nombre = self.nombre_a.get() if self.turno_actual == "A" else self.nombre_b.get()
         color = COLOR_PLAYER_A if self.turno_actual == "A" else COLOR_PLAYER_B
@@ -325,10 +368,17 @@ class JuegoMorseFinal:
                 if not raw_data: #Si no recibe datos, se cayo
                     break
                 data = raw_data.decode().strip()#Convierte de bytes a str y le quita espacios
+
+                if "SWITCH_ON" in data:
+                    self.ventana.after(0, self.actualizar_switch, True)
+                elif "SWITCH_OFF" in data:
+                    self.ventana.after(0, self.actualizar_switch, False)
+
                 if self.modo_juego.get() == "Simple" or self.turno_actual == self.juega_en_maqueta:
                     if "BOTON_DOWN" in data:
                         #Detecta si hay un boton presionado
                         if hasattr(self, 'timer_letra') and self.timer_letra:
+                            print("Siiiiii")
                             self.ventana.after_cancel(self.timer_letra)
                             self.timer_letra = None
                         self.ventana.after(0, self.iniciar_presion)
@@ -372,8 +422,11 @@ class JuegoMorseFinal:
         
         tk.Button(btn_frame, text="Salir", font=("Arial", 14, "bold"), bg="#444", fg="white", 
                   command=self.ventana.destroy, width=15).pack(side="left", padx=10)
+    #Ventana del comprobador de codigos del juego
+    
 
     def reiniciar_todo(self):
+
         #Limpia variables
         self.puntos_a = 0
         self.puntos_b = 0
