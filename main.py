@@ -20,7 +20,18 @@ CLK2=machine.Pin(17,machine.Pin.OUT)
 FilaLeds1=machine.Pin(13,machine.Pin.OUT)
 FilaLeds2=machine.Pin(14,machine.Pin.OUT)
 FilaLeds3=machine.Pin(15,machine.Pin.OUT)
-buzzer = machine.PWM(machine.Pin(5))
+buzzer = machine.PWM(machine.Pin(6))
+
+#ADICION DE LA SEGUNDA PARTE
+#Interruptor ACII
+pin_switch = machine.Pin(11, machine.Pin.IN, machine.Pin.PULL_UP)
+
+#Pines de salida
+pin_A = machine.Pin(2, machine.Pin.OUT)
+pin_B = machine.Pin(3, machine.Pin.OUT)
+pin_C = machine.Pin(4, machine.Pin.OUT)
+pin_D = machine.Pin(5, machine.Pin.OUT)
+
 # Boton
 boton = machine.Pin(22, machine.Pin.IN, machine.Pin.PULL_UP) 
 estado_anterior = boton.value()
@@ -151,12 +162,18 @@ def procesar_morse(mensaje):
                 sonar_y_prender(caracter, dur)
                 if i < len(codigo) - 1: time.sleep(unidad_tiempo * 1)
             time.sleep(unidad_tiempo * 3)
-
+#Segunda parte
+def decimal_binario(num):
+    pin_A.value((num >> 3) & 1)
+    pin_B.value((num >> 2) & 1)
+    pin_C.value((num >> 1) & 1)
+    pin_D.value(num & 1)
+    
 def iniciar_servidor():
     global unidad_tiempo, dificultad
     
     if not conectar_wifi():
-        print("No se pudo conectar. Reiniciando...")
+        print("No se pudo conectar. Reiniciando..")
         time.sleep(2)
         machine.reset()
 
@@ -173,6 +190,17 @@ def iniciar_servidor():
             print("Conectado con:", addr)
             conn.settimeout(0.01)
             estado_anterior = boton.value()
+            estado_switch_anterior = pin_switch.value()
+            
+            try:
+                if estado_switch_anterior == 0:
+                    conn.sendall(b"SWITCH_ON\n")
+                else:
+                    conn.sendall(b"SWITCH_OFF\n")
+            except:
+                pass
+            
+            ultimo_numero=0
 
             while True:
                 #Recibe info
@@ -184,12 +212,35 @@ def iniciar_servidor():
                         unidad_tiempo = float(msg[1])
                         dificultad = msg[2]
                         print("Nueva Config:", dificultad)
+                        
                     elif msg[0] == "PLAY":
                         _thread.start_new_thread(procesar_morse, (msg[1],))
+                    #Activar modo incrementador
+                        
+                    elif msg[0]=="ASCII":
+                        ultimo_numero=int(msg[1])
                 except OSError:
                     pass
+                if pin_switch.value() == 0:
+                    decimal_binario(ultimo_numero)
+                else:
+                    decimal_binario(0)
+                
+                #Envia el estado del switch al PC si cambio   # <-- NUEVO
+                estado_switch_actual = pin_switch.value()
+                if estado_switch_actual != estado_switch_anterior:
+                    try:
+                        if estado_switch_actual == 0:
+                            conn.sendall(b"SWITCH_ON\n")
+                        else:
+                            conn.sendall(b"SWITCH_OFF\n")
+                        estado_switch_anterior = estado_switch_actual
+                    except:
+                        break
 
                 #Envia info del Boton
+                print("Switch:", pin_switch.value(), "Boton:", boton.value())
+                time.sleep(0.5)
                 estado_actual = boton.value()
                 if estado_actual != estado_anterior:
                     try:
